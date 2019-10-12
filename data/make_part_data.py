@@ -1,7 +1,7 @@
 import json
 
-input_file = 'BLXXXeval3/useful_data.txt'
-target_file_prefix = 'BLXXXeval3/useful_part'
+input_file = 'BLXXXgrd02/useful_data.txt'
+target_file_prefix = 'BLXXXgrd02/useful_part'
 
 # Read in python list of utterances and their words
 with open(input_file, 'r') as f:
@@ -13,8 +13,8 @@ print("Collected useful data")
 utterances = [[str(file[0]), [str(word).lower() for word in file[1]]] for file in utterances]
 
 # Initialise separate lists for each part
+part_utts_list = [[], [], [], [], []]
 
-part_utts_list = [[]]*5
 
 # Sort utterances into each correct part list
 # Remove <s>, 'sp' and <sil> tokens
@@ -32,11 +32,11 @@ for item in utterances:
 		part_num = 0
 	elif part_letter == 'B':
 		part_num = 1
-	elif part_letter == 'C'
+	elif part_letter == 'C':
 		part_num = 2
-	elif part_letter == 'D'
+	elif part_letter == 'D':
 		part_num = 3
-	elif part_letter == 'E'
+	elif part_letter == 'E':
 		part_num = 4
 	else:
 		print("part not in range")
@@ -63,6 +63,7 @@ for i in range(5):
 	target_file = target_file_prefix + str(i+1) + '.txt'
 	with open(target_file, 'w') as f:
 		f.truncate(0)
+		print(len(part_utts_list[i]))
 		f.write(json.dumps(part_utts_list[i]))
 
 
