@@ -1,25 +1,25 @@
 import json
 import torch
-from models import attack_part3
+from models import ThreeLayerNet_1LevelAttn_multihead
 
 
 #Define previous sub-optimal words found
-words = ['www.zawya.com', 'spokesman_micky_rosenfeld', 'average_+_-1', 'viewpoints_race']
+words = []
 
 word_num= len(words)+1
 max_words_in_utt = 200
 
 
 #Select any model that accepts extra word vectors to append
-model_path = '../saved_models/part3_RNN_multihead_seed1.pt'
+model_path = 'part3_multihead_seed1.pt'
 model = torch.load(model_path)
 model.eval()
 
 #Preprocess evaluatiion data
 #Load evaluation data
-target_file3 = '../eval_data4D_training_part3.txt'
+input_data = 'eval_data4D_training_part3.txt'
 
-with open(target_file3, 'r') as f:
+with open(input_data, 'r') as f:
         data = json.load(f)
 
 print("Loaded data")
@@ -70,7 +70,7 @@ M = torch.FloatTensor(M)
 
 
 #Load word2vec dict
-file_to_read = '../../word2vec_emb.txt'
+file_to_read = 'word2vec_emb.txt'
 with open(file_to_read, 'r') as f:
 	word2vec_dict = json.loads(f.read())
 
@@ -78,12 +78,43 @@ with open(file_to_read, 'r') as f:
 #Define sub-optimal words already learnt greedily
 vects = [[float(num) for num in word2vec_dict[word]] for word in words]
 
+# Load ASR and word2vec overlap words that we want to check through
+words_file = 'test_words.txt'
+with open(words_file, 'r') as f:
+	test_words = json.loads(f.read())
 
 
-# Exhaustively search word2vec words for next word to add
-best = ['none', 0]
-for word, word_vect in word2vec_dict.items():
+
+
+# Define class to have a structure in place to keep num_words best adversarial words
+class best_words:
+	def __init__(self, num_words):
+		self.words = [['none', 0]]*num_words
 	
+	def check_word_to_be_added(self, y_avg):
+		if y_avg > self.words[-1][1]:
+			return True
+		else:
+			return False
+
+	def add_word(self, word, y_avg):
+		self.words.append([word, y_avg])
+		# Sort from highest to lowest y_avg
+		self.words = sorted(self.words, reverse = True, key = lambda x: x[1])
+		# Drop the worst extra word
+		self.words = self.words[:-1]
+
+
+
+
+
+
+# Exhaustively search test_words words for next word to add
+best = best_words(5)
+
+for word in test_words:
+	
+	word_vect = word2vec_dict[word]
 	new_vect = [float(num) for num in word_vect]
 	init_word_vects = vects[:]
 	init_word_vects.append(new_vect)
@@ -93,7 +124,8 @@ for word, word_vect in word2vec_dict.items():
 	for i, vect in enumerate(init_word_vects):
 		# Represent vect as 4D tensor 1x1x1x300
 		expanded_vect = vect[None, None, None, :]
-          # Extract ith slice of Qs
+		
+		# Extract ith slice of Qs
 		Qi = Qs[:, i, :, :]
 
 		#Expand Qs_ith slice to be 4D tensor with added 4th dimension
@@ -106,18 +138,19 @@ for word, word_vect in word2vec_dict.items():
 		Xp = Xp.add(P)
 
                 # Pass through the trained model
-	y_adv = model(Xp, M, L)
+	y_adv = model(Xp, M)
 	
 	
 	y_adv = y_adv[:,0]
 	y_adv[y_adv>6] = 6
 	y_adv[y_adv<0] = 0
 
-	val = torch.mean(y_adv)
+	val = torch.mean(y_adv).item()
 	
-	if val > best[1]:
-		best = [word, val]
-		print(words, best)
+	if best.check_word_to_be_added(val):
+		best.add_word(word, val)
+		print(best.words)
+		
 
 print(best)
 
