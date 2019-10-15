@@ -149,8 +149,14 @@ for word in test_words:
 	
 	if best.check_word_to_be_added(val):
 		best.add_word(word, val)
-		print(best.words)
 		
+		
+# Write these words to a file
+target_file = 'best_words.txt'
+with open(target_file, 'w') as f:
+	f.truncate(0)
+	f.write(json.dumps(best.words))
+
 
 print(best)
 
