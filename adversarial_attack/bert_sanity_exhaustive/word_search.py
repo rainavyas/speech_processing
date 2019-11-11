@@ -1,24 +1,27 @@
 import argparse
 import json
 import torch
+from transformers import *
 from models import ThreeLayerNet_1LevelAttn_RNN
 
 # n-1 other words to add - add space before each word added to string
-other_words = 'detainees awfully rabies admittedly foreclosures admittedly'
-k = 7
+other_words = ''
+k = 1 
 
 # Get the part and its seed to adversarially attack
 commandLineParser = argparse.ArgumentParser()
 commandLineParser.add_argument('--part', type = int, default = 3, help = 'Specify the part to attack')
 commandLineParser.add_argument('--seed', type = int, default = 1, help = 'Specify the seed of particular trained part model')
 
+# Get the num of words to check and the index of which set to search
+commandLineParser.add_argument('--num', type = int, default = 100, help = 'Specify num words to check')
+commandLineParser.add_argument('--index', type = int, default = 0, help = 'Specify the index of the set of words to check')
+
 args = commandLineParser.parse_args()
 part = args.part
 seed = args.seed
-
-print("part: " + str(part))
-print("seed: " + str(seed))
-
+num = args.num
+index = args.index
 
 # Define the number of utterances per speaker per part
 utt_part_vals = [6, 8, 1, 1, 5]
@@ -30,47 +33,48 @@ MAX_WORDS_IN_UTT = 200
 trained_model_to_load = 'part'+str(part)+'_multihead_seed'+str(seed)+'.pt'
 
 #Load the model to attack
-model_path = '../saved_bert_models/'+trained_model_to_load
+model_path = '../../saved_bert_models/'+trained_model_to_load
 model = torch.load(model_path)
 model.eval()
 
+print("loaded model")
 
 # Load the relevant part 'useful' data
-data_file = '../data/BLXXXeval3/useful_part'+str(part)+'.txt'
+data_file = '../../data/BLXXXeval3/useful_part'+str(part)+'.txt'
 with open(data_file, 'r') as f:
 	utterances = json.loads(f.read())
 
-print("Loaded Data")
 
 # Convert json output from unicode to string
 utterances = [[str(item[0]), str(item[1])] for item in utterances]
 
 # Add the n-1 other words to every utterance
-utterances = [[item[0], item[1]+' '+other_words] for item in utterances]
+#utterances = [[item[0], item[1]+' '+other_words] for item in utterances]
 
 # Create list of words to iterate through for appending
-words_file = 'word2vec/best_wordsk1.txt'
+words_file = '../word2vec/test_words.txt'
 with open(words_file, 'r') as f:
 	test_words = json.loads(f.read())
-test_words = [str(word[0]).lower() for word in test_words]
+test_words = [str(word).lower() for word in test_words]
 
-# Add blank word at beginning of list
-test_words = ['']+test_words
-
-print("words to check: "+ str(len(test_words)))
+# Reduce list to relevant section
+start_point = index * num
+test_words = test_words[start_point:start_point+num]
 
 # Load tokenizer and BERT model
-tokenizer = torch.hub.load('huggingface/pytorch-pretrained-BERT', 'bertTokenizer', 'bert-base-cased', do_basic_tokenize=False, do_lower_case=True)
-bert_model = torch.hub.load('huggingface/pytorch-pretrained-BERT', 'bertModel', 'bert-base-cased')
+#tokenizer = torch.hub.load('huggingface/pytorch-pretrained-BERT', 'bertTokenizer', 'bert-base-cased', do_basic_tokenize=False, do_lower_case=True)
+#bert_model = torch.hub.load('huggingface/pytorch-pretrained-BERT', 'bertModel', 'bert-base-cased')
+#bert_model.eval()
+
+
+tokenizer = BertTokenizer.from_pretrained('bert-base-cased', do_basic_tokenize=False, do_lower_case=True )
+bert_model = BertModel.from_pretrained('bert-base-cased')
 bert_model.eval()
 
-print("Loaded BERT model")
+print("Loaded Bert model")
 
 #Define threshold to beat
 best = ['none', 0]
-
-# Continue an algorithm from different point
-counter = 0
 
 for new_word in test_words:
 
@@ -165,15 +169,13 @@ for new_word in test_words:
 
 	if avg > best[1]:
 		best = [new_word, avg]
-		print(new_word, avg)
-	counter += 1
-	print(counter)
- 
+		print(best)
+ 	
 # Write best word to file
 
 best = [best[0], best[1].item()]
 
-file_name = 'thewordk'+str(k)+ '.txt'
+file_name = 'Words/index'+str(index)+ '.txt'
 with open(file_name, 'w') as f:
 	f.truncate(0)
 	f.write(json.dumps(best))
