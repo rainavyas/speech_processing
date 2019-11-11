@@ -1,33 +1,36 @@
-import argparse
 import json
 import torch
 from transformers import *
 from models import ThreeLayerNet_1LevelAttn_RNN
+import matplotlib.pyplot as plt
+import numpy as np
 
-# n-1 other words to add - add space before each word added to string
-other_words = 'detainees awfully'
-k = 3
-
-# Get the part and its seed to adversarially attack
-commandLineParser = argparse.ArgumentParser()
-commandLineParser.add_argument('--part', type = int, default = 3, help = 'Specify the part to attack')
-commandLineParser.add_argument('--seed', type = int, default = 1, help = 'Specify the seed of particular trained part model')
-
-args = commandLineParser.parse_args()
-part = args.part
-seed = args.seed
-
-print("part: " + str(part))
-print("seed: " + str(seed))
+# adversarial words to add:
+adv_words = ['', 'detainees', 'awfully', 'rabies', 'admittedly', 'foreclosures', 'admittedly']
 
 
-# Define the number of utterances per speaker per part
-utt_part_vals = [6, 8, 1, 1, 5]
-MAX_UTTS_PER_SPEAKER_PART = utt_part_vals[part-1]
 
-# Define threshold for max number of words per utterance
+# Define constants
+MAX_UTTS_PER_SPEAKER_PART = 1
 MAX_WORDS_IN_UTT = 200
 
+
+
+
+
+
+# Make sentences from adv words
+sents = []
+for i in range(len(adv_words)):
+	new_sen = ''
+	for word in adv_words[:i+1]:
+		new_sen = new_sen + ' ' + word
+
+	sents.append(new_sen)
+
+
+part = 3
+seed = 1
 trained_model_to_load = 'part'+str(part)+'_multihead_seed'+str(seed)+'.pt'
 
 #Load the model to attack
@@ -41,57 +44,55 @@ data_file = '../data/BLXXXeval3/useful_part'+str(part)+'.txt'
 with open(data_file, 'r') as f:
 	utterances = json.loads(f.read())
 
-print("Loaded Data")
+print("Loaded word Data")
 
 # Convert json output from unicode to string
 utterances = [[str(item[0]), str(item[1])] for item in utterances]
 
-# Add the n-1 other words to every utterance
-utterances = [[item[0], item[1]+' '+other_words] for item in utterances]
 
-# Create list of words to iterate through for appending
-words_file = 'word2vec/best_wordsk1.txt'
-with open(words_file, 'r') as f:
-	test_words = json.loads(f.read())
-test_words = [str(word[0]).lower() for word in test_words]
 
-# Add blank word at beginning of list
-test_words = ['']+test_words
 
-print("words to check: "+ str(len(test_words)))
 
-# Load tokenizer and BERT model
-#tokenizer = torch.hub.load('huggingface/pytorch-pretrained-BERT', 'bertTokenizer', 'bert-base-cased', do_basic_tokenize=False, do_lower_case=True)
-#bert_model = torch.hub.load('huggingface/pytorch-pretrained-BERT', 'bertModel', 'bert-base-cased')
-#bert_model.eval()
-
+#Load tokenizer and BERT model
 tokenizer = BertTokenizer.from_pretrained('bert-base-cased', do_basic_tokenize=False, do_lower_case=True)
 bert_model = BertModel.from_pretrained('bert-base-cased')
 bert_model.eval()
 
-
-
 print("Loaded BERT model")
 
-#Define threshold to beat
-best = ['none', 0]
 
-# Continue an algorithm from different point
-counter = 0
 
-for new_word in test_words:
+# dict to store the part3 true expert grade
+grades = {}
 
-	# Add new_word to every utterance
-	new_utterances = [[item[0], item[1]+' '+new_word] for item in utterances]
+# Get the expert grades by utterance id
+grades_file_path = '/home/alta/BLTSpeaking/grd-graphemic-kmk-v2/GKTS4-D3/grader/BLXXXeval3/score_10_mbr_rnnlm/data/grades.txt'
+lines = [str(line.rstrip('\n')) for line in open(grades_file_path)]
 
-	# Convert sentences to a list of BERT embeddings (embeddings per word)
-	# Store as dict of speaker id to utterances list (each utterance a list of embeddings)
-	utt_embs = {}
-	for item in new_utterances:
+
+for line in lines[1:]:
+	speaker_id = line[:12]
+	grade_part_3 = line[-15:-12]
+	grades[speaker_id] = float(grade_part_3)
+
+
+y_preds = []
+y_reals = [] # as dict used y_real in different order every time we do bert process
+# For each length adversarial phrase find prediction and add to the same graph
+for sent in sents:
+	
+	# Add the advserarial phrase to every utterance
+	attacked_utts = [[item[0], item[1]+' '+sent] for item in utterances]
+
+
+	# Convert sentences to a list of BERT embeddings
+	# Store as dict of speaker id to utts list (list of embeddings)
+	utt_embs = {}	
+	for item in attacked_utts:
 		fileName = item[0]
 		speakerid = fileName[:12]
 		sentence = item[1]
-
+		
 		tokenized_text = tokenizer.tokenize(sentence)
 		indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
 		if len(indexed_tokens) < 1:
@@ -103,15 +104,24 @@ for new_word in test_words:
 			bert_embs = encoded_layers.squeeze(0)
 			word_vecs = bert_embs.tolist()
 		if speakerid not in utt_embs:
-			utt_embs[speakerid] =  [word_vecs]
+			utt_embs[speakerid] = [word_vecs]
 		else:
 			utt_embs[speakerid].append(word_vecs)
+		
+		
 
-	
+
 	# Convert to appropriate 4D tensor
-			
-	vals = list(utt_embs.values())
-
+	y_real = []
+	vals = []
+	for speaker_id in utt_embs:
+		try:
+			y_real.append(grades[speaker_id])
+		except:
+			continue
+		vals.append(utt_embs[speaker_id])
+	y_reals.append(y_real)
+	
 	# Initialise list to hold all input data in tensor format
 	X = []
 
@@ -124,14 +134,13 @@ for new_word in test_words:
 		# Reject speakers with not exactly correct number of utterances in part
 		if len(utts) != MAX_UTTS_PER_SPEAKER_PART:
 			continue
-			
 
 		# Create list to store utterance lengths
 		utt_lengths = []
 
 		for curr_utt in utts:
 			num_words = len(curr_utt)
-		
+
 			if num_words <= MAX_WORDS_IN_UTT:
 				# append padding of zero vectors
 				words_to_add = MAX_WORDS_IN_UTT - num_words
@@ -146,7 +155,7 @@ for new_word in test_words:
 
 			# Convert all values to float
 			new_utt = [[float(i) for i in word] for word in new_utt]
-		
+
 			new_utts.append(new_utt)
 
 		X.append(new_utts)
@@ -168,20 +177,39 @@ for new_word in test_words:
 	y_adv[y_adv>6] = 6
 	y_adv[y_adv<0] = 0
 
-	avg = torch.mean(y_adv)
+	y_preds.append(y_adv)
 
-	if avg > best[1]:
-		best = [new_word, avg]
-		print(new_word, avg)
-	counter += 1
-	print(counter)
+
+
+# Plot graphs of pred, adv vs real
+y_real0 = y_reals[0]
+y_preds = [y_pred.tolist() for y_pred in y_preds]
+
+y_pred = y_preds[0]
+y_advN = y_preds[1:]
+
+
+for i in range(len(y_advN)):
+	y_adv = y_advN[i]
+	plt.plot(y_real0, y_pred, 'o', color = 'black', label = 'Speaker data point')
+	plt.plot(y_reals[i+1], y_adv, 'o', color = 'green', label = 'Adversarially attacked data point')
+	plt.plot(y_reals[i+1], y_reals[i+1], color='red', label='Optimal Prediction')
+	plt.plot(np.unique(y_real0), np.poly1d(np.polyfit(y_real0, y_pred, 1))(np.unique(y_real0)), label = 'No attack LOB, k=0')
+	plt.plot(np.unique(y_reals[i+1]), np.poly1d(np.polyfit(y_reals[i+1], y_adv, 1))(np.unique(y_reals[i+1])), label = 'Adversarial LOB, k='+str(i+1))
+
+
+	plt.xlabel('True Part ' + str(3)+ ' Expert Grades')
+	plt.ylabel('Predicted Grades')
+	plt.legend(loc='lower right')
+
+	png_file = 'plots/adv_part3_k'+str(i+1)
+	plt.savefig(png_file)
+	plt.clf()
+
+
+
+
+
+
  
-# Write best word to file
-
-best = [best[0], best[1].item()]
-
-file_name = 'thewordk'+str(k)+ '.txt'
-with open(file_name, 'w') as f:
-	f.truncate(0)
-	f.write(json.dumps(best))
-
+ 
